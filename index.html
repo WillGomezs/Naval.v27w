@@ -2693,6 +2693,8 @@ button,.btn-menu,.btn-result,.modal-btn,.icon-btn,.goal-chip,.quiz-link-btn{touc
 }
 .modal-box-exam{width:min(100%,680px)}
 .modal-field select,.modal-field input[type=number]{min-height:44px}
+.modal-field select[multiple]{min-height:168px;padding:8px 10px}
+.modal-hint{margin-top:6px;font-size:.78rem;line-height:1.35;color:var(--text-muted)}
 .pause-box{width:min(100%,360px);max-height:90dvh;overflow:auto}
 .image-lightbox{padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
 
@@ -2855,17 +2857,18 @@ button,.btn-menu,.btn-result,.modal-btn,.icon-btn,.goal-chip,.quiz-link-btn{touc
     <div class="modal-field">
       <label>Quantidade de questões</label>
       <select id="cm-qty">
-        <option value="10">10 questões (~15 min)</option>
-        <option value="20" selected>20 questões (~30 min)</option>
-        <option value="40">40 questões (~60 min)</option>
-        <option value="80">80 questões (prova completa)</option>
+        <option value="20" selected>20 questões</option>
+        <option value="40">40 questões</option>
+        <option value="60">60 questões</option>
+        <option value="80">80 questões</option>
+        <option value="120">120 questões</option>
+        <option value="160">160 questões</option>
       </select>
     </div>
     <div class="modal-field">
       <label>Filtrar por ano / prova</label>
-      <select id="cm-prova">
-        <option value="all">Todas as provas</option>
-      </select>
+      <select id="cm-prova" multiple size="6"></select>
+      <div class="modal-hint">Use Ctrl (Windows/Linux) ou ⌘ (Mac) para marcar mais de uma prova.</div>
     </div>
     <div class="modal-field">
       <label>Temporizador</label>
@@ -4673,11 +4676,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   populateExamSelect();
   populateTopicDropdown();
+  populateCustomQtyOptions();
   populateCustomProvaSelect();
   const cmDisc = document.getElementById('cm-disc');
   const cmTopic = document.getElementById('cm-topic');
   if (cmDisc) cmDisc.addEventListener('change', () => {
     populateTopicDropdown();
+    populateCustomQtyOptions();
     populateCustomProvaSelect();
   });
   if (cmTopic) cmTopic.addEventListener('change', () => populateCustomProvaSelect());
@@ -5258,9 +5263,10 @@ function openCustomModal(preset = {}) {
   const qtySelect = document.getElementById('cm-qty');
   const timerSelect = document.getElementById('cm-timer');
   if (discSelect && preset.disciplina) discSelect.value = preset.disciplina;
+  populateTopicDropdown(preset.topic || preset.assunto || null);
+  populateCustomQtyOptions(preset.qty || null);
   if (qtySelect && preset.qty) qtySelect.value = String(preset.qty);
   if (timerSelect && typeof preset.timerSecs === 'number') timerSelect.value = String(preset.timerSecs);
-  populateTopicDropdown(preset.topic || preset.assunto || null);
   populateCustomProvaSelect(preset.prova || null);
   modal.classList.remove('hidden');
 }
@@ -5284,12 +5290,38 @@ function populateExamSelect() {
   });
 }
 
+function populateCustomQtyOptions(preferredQty = null) {
+  const select = document.getElementById('cm-qty');
+  const discSelect = document.getElementById('cm-disc');
+  if (!select) return;
+  const disc = discSelect ? discSelect.value : 'misto';
+  const current = preferredQty ? String(preferredQty) : select.value;
+  const options = disc === 'misto'
+    ? [40, 80, 120, 160]
+    : [20, 40, 60, 80, 100, 120, 160];
+  select.innerHTML = '';
+  options.forEach((qty, index) => {
+    const option = document.createElement('option');
+    option.value = String(qty);
+    option.textContent = `${qty} questões`;
+    if (index === 0 && !current) option.selected = true;
+    select.appendChild(option);
+  });
+  if (current && options.includes(Number(current))) {
+    select.value = String(current);
+  } else {
+    select.value = String(options[0]);
+  }
+}
+
 function populateCustomProvaSelect(preferredProva = null) {
   const select = document.getElementById('cm-prova');
   const discSelect = document.getElementById('cm-disc');
   const topicSelect = document.getElementById('cm-topic');
   if (!select) return;
-  const current = preferredProva || select.value || 'all';
+  const previous = preferredProva
+    ? (Array.isArray(preferredProva) ? preferredProva : [preferredProva])
+    : [...select.selectedOptions].map((opt) => opt.value);
   const disc = discSelect ? discSelect.value : 'misto';
   const topic = topicSelect ? topicSelect.value : 'all';
   let pool = DATA.questions.slice();
@@ -5299,15 +5331,19 @@ function populateCustomProvaSelect(preferredProva = null) {
     pool = pool.filter((q) => getQuestionTopics(q).some((candidate) => normalizeTopicValue(candidate) === normalizedTopic));
   }
   const provas = [...new Set(pool.map((q) => q.prova).filter(Boolean))].sort((a, b) => b.localeCompare(a, 'pt-BR', { numeric: true }));
-  select.innerHTML = '<option value="all">Todas as provas</option>';
+  select.innerHTML = '';
   provas.forEach((prova) => {
     const option = document.createElement('option');
     option.value = prova;
     option.textContent = prova;
+    if (previous.includes(prova)) option.selected = true;
     select.appendChild(option);
   });
-  select.value = provas.includes(current) ? current : 'all';
+  if (!select.selectedOptions.length && select.options.length) {
+    select.options[0].selected = true;
+  }
 }
+
 
 function openExamModal() {
   populateExamSelect();
@@ -5336,32 +5372,51 @@ function startCustomQuiz() {
   const disc = document.getElementById('cm-disc').value;
   const topic = document.getElementById('cm-topic').value;
   const qty = parseInt(document.getElementById('cm-qty').value, 10);
-  const prova = document.getElementById('cm-prova').value;
   const timerSecs = parseInt(document.getElementById('cm-timer').value, 10);
+  const provaSelect = document.getElementById('cm-prova');
+  const selectedProvas = provaSelect ? [...provaSelect.selectedOptions].map((opt) => opt.value).filter(Boolean) : [];
+  const basePerProva = disc === 'misto' ? 40 : 20;
 
-  const questions = buildQuestionPool({
+  if (!selectedProvas.length) {
+    showToast('Selecione ao menos uma prova.');
+    return;
+  }
+
+  const expectedProvas = qty / basePerProva;
+  if (!Number.isInteger(expectedProvas)) {
+    showToast('A quantidade selecionada não é compatível com este modo.');
+    return;
+  }
+
+  if (selectedProvas.length !== expectedProvas) {
+    showToast(`Para ${qty} questões neste modo, selecione ${expectedProvas} prova(s).`);
+    return;
+  }
+
+  const perProvaLimit = qty / selectedProvas.length;
+  const questions = selectedProvas.flatMap((prova) => buildQuestionPool({
     disciplina: disc === 'misto' ? null : disc,
     topic: topic === 'all' ? null : topic,
-    prova: prova === 'all' ? null : prova,
-    limit: qty,
+    prova,
+    limit: perProvaLimit,
     mixed: disc === 'misto',
-  });
+  }));
 
   if (!questions.length) {
-    showToast('Ainda não há questões cadastradas para este assunto.');
-    populateCustomProvaSelect();
+    showToast('Ainda não há questões cadastradas para esta combinação.');
+    populateCustomProvaSelect(selectedProvas);
     return;
   }
 
   if (questions.length < qty) {
-    showToast('Foram encontradas ' + questions.length + ' questões para esse filtro.');
+    showToast('Foram encontradas ' + questions.length + ' questões para essa combinação.');
   }
 
   closeCustomModal();
   const modeParts = ['Personalizado'];
   modeParts.push(disc === 'misto' ? 'Misto' : disc);
   if (topic !== 'all') modeParts.push(topic);
-  if (prova !== 'all') modeParts.push(prova);
+  modeParts.push(selectedProvas.join(' + '));
 
   createSession({
     questions,
@@ -5371,6 +5426,7 @@ function startCustomQuiz() {
   });
   startSession(timerSecs);
 }
+
 
 function startQuiz(type, provaName) {
   if (type === 'port_all') {
